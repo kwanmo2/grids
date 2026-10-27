@@ -54,10 +54,20 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
             }
         }
         VK_TAB if ctrl => cycle(if shift { -1 } else { 1 }),
-        VK_T if ctrl && !shift && !alt && tabs_on() => new_tab(a),
+        VK_T if ctrl && !shift && !alt => new_tab(a),
         VK_W if ctrl && !shift && !alt && tabs_on() => close_tab(a, app(|x| x.s.tab[a])),
         VK_K if ctrl && !shift && !alt && tabs_on() => dup_tab(a, app(|x| x.s.tab[a])),
         k @ (VK_NEXT | VK_PRIOR) if ctrl && !shift && !alt && tabs_on() => step_tab(a, if k == VK_NEXT { 1 } else { -1 }),
+        k if tab_number_key(k, ctrl, shift, alt).is_some() => {
+            let k = tab_number_key(k, ctrl, shift, alt).unwrap();
+            if k < app(|x| x.s.tab_list(a).len()) {
+                if !tabs_on() {
+                    toggle_tabs();
+                }
+                pick_tab(a, k);
+                focus_view(a);
+            }
+        }
         k if ctrl && !shift && !alt && (VK_1.0..=VK_9.0).contains(&k.0) && ((k.0 - VK_1.0) as usize) < app(|x| x.s.panes()) => {
             let i = (k.0 - VK_1.0) as usize;
             set_active(i);
@@ -164,6 +174,11 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
     true
 }
 
+// Plain Alt+1..4 selects a tab; Ctrl+digits remain pane shortcuts.
+pub(crate) fn tab_number_key(vk: VIRTUAL_KEY, ctrl: bool, shift: bool, alt: bool) -> Option<usize> {
+    (alt && !ctrl && !shift && (VK_1.0..=VK_4.0).contains(&vk.0)).then(|| (vk.0 - VK_1.0) as usize)
+}
+
 // F6 ring: 0 file list, 1 address bar, 2 filter, 3 folder tree (skipped without one).
 pub(crate) fn focus_ring(pos: usize, back: bool, tree: bool) -> usize {
     let n = if tree { 4 } else { 3 };
@@ -192,6 +207,9 @@ pub(crate) unsafe fn pre_translate(m: &MSG) -> bool {
             false
         }
         WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN => {
+            if let Some(p) = app(|a| a.tab_press) {
+                cancel_tab_drag(p.hwnd);
+            }
             kids_cancel();
             if let Some(i) = pane_of(m.hwnd) {
                 set_active(i);
@@ -199,6 +217,12 @@ pub(crate) unsafe fn pre_translate(m: &MSG) -> bool {
             false
         }
         WM_KEYDOWN | WM_SYSKEYDOWN => {
+            if let Some(p) = app(|a| a.tab_press) {
+                cancel_tab_drag(p.hwnd);
+                if VIRTUAL_KEY(m.wParam.0 as u16) == VK_ESCAPE {
+                    return true;
+                }
+            }
             kids_cancel();
             // swallowed whole: no TranslateMessage, so no WM_CHAR either
             let (eat, next) = held_key(app(|a| a.held), m.wParam.0 as u16, m.lParam.0 & (1 << 30) != 0);

@@ -376,7 +376,7 @@ pub(crate) unsafe fn paint_pane(h: HWND) {
         let waiting = a.kids.as_ref().filter(|k| k.hwnd == h).map(|k| k.dir.clone());
         (active, i, a.dpi, a.icon_font, a.small_font, a.font, a.s.accent_now(), hot, tint, folder, waiting)
     });
-    let tabs = i.filter(|_| tabs_on()).map(|i| app(|a| (a.s.tab_list(i), a.s.tab[i])));
+    let tabs = i.filter(|_| tabs_on()).map(|i| app(|a| (a.s.tab_list(i), a.s.tab_color_list(i), a.s.tab[i], a.tab_press.filter(|p| p.hwnd == h))));
     let ilist = match app(|a| a.ilist.clone()) {
         None if folder >= 0 => {
             let l = SHGetImageList::<IImageList>(SHIL_SMALL as i32).ok();
@@ -449,8 +449,8 @@ pub(crate) unsafe fn paint_pane(h: HWND) {
                 text(dc, RECT { left: r.left + s(4), right: r.right - s(4), ..r }, &label, font, ink, DT_LEFT);
             }
         }
-        if let Some((list, cur)) = &tabs {
-            paint_tabs(dc, &pg, list, *cur, dpi, font, accent);
+        if let Some((list, colors, cur, press)) = &tabs {
+            paint_tabs(dc, &pg, list, colors, *cur, dpi, font, *press);
         }
         if filtered {
             // filter applied: accent chip left of the edit (which starts at filt.left + s(24))

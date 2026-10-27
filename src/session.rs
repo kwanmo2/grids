@@ -29,6 +29,7 @@ pub(crate) struct Session {
     pub(crate) tabs_on: bool,          // tab strips shown (View menu), app-wide; the tabs themselves are kept while off
     pub(crate) tabs: Vec<Vec<String>>, // per pane: its tabs' folders; the current one's entry is stale, paths[i] is the truth. <2 = no tabs
     pub(crate) tab: Vec<usize>,        // per pane: current tab
+    pub(crate) tab_colors: Vec<Vec<u8>>, // per tab: palette index; travels with the tab when reordered
 }
 
 impl Default for Session {
@@ -56,9 +57,10 @@ impl Default for Session {
             cols: vec![String::new(); MAXP],
             tints: vec![0; MAXP],
             order: Vec::new(),
-            tabs_on: false,
+            tabs_on: true,
             tabs: vec![Vec::new(); MAXP],
             tab: vec![0; MAXP],
+            tab_colors: vec![Vec::new(); MAXP],
         }
     }
 }
@@ -174,6 +176,9 @@ impl Session {
                             s.tab[i] = cur.min(list.len() - 1);
                             s.tabs[i] = list;
                         }
+                    } else if let Some(i) = slot('l') {
+                        // Optional in older sessions; preserve positions even for invalid colour entries.
+                        s.tab_colors[i] = v.split(',').enumerate().map(|(k, c)| c.trim().parse::<u8>().ok().filter(|&c| c < 6).unwrap_or(TAB_COLORS[k % 6])).collect();
                     } else if let Some(i) = slot('t') {
                         s.tints[i] = v.trim().parse().ok().filter(|&k| k <= 6).unwrap_or(0);
                     }
@@ -232,6 +237,10 @@ impl Session {
             if tabs.len() > 1 {
                 o += &format!("b{i}={}|{}\n", self.tab[i], tabs.join("|"));
             }
+            let colors = self.tab_color_list(i);
+            if tabs.len() > 1 || colors[0] != TAB_COLORS[0] {
+                o += &format!("l{i}={}\n", join(&colors));
+            }
         }
         o
     }
@@ -251,6 +260,7 @@ impl Session {
         (self.active, self.paths, self.views, self.cols) = (o.active, o.paths.clone(), o.views.clone(), o.cols.clone());
         self.tints = o.tints.clone();
         (self.tabs, self.tab) = (o.tabs.clone(), o.tab.clone());
+        self.tab_colors = o.tab_colors.clone();
         self.order.clear();
     }
 
@@ -262,6 +272,7 @@ impl Session {
         self.tints.swap(i, j);
         self.tabs.swap(i, j);
         self.tab.swap(i, j);
+        self.tab_colors.swap(i, j);
         if self.active == i {
             self.active = j;
         } else if self.active == j {
@@ -279,8 +290,17 @@ impl Session {
             let k = k as usize;
             (self.paths[i], self.views[i], self.cols[i], self.tints[i]) = (old.paths[k].clone(), old.views[k], old.cols[k].clone(), old.tints[k]);
             (self.tabs[i], self.tab[i]) = (old.tabs[k].clone(), old.tab[k]);
+            self.tab_colors[i] = old.tab_colors[k].clone();
         }
     }
+}
+
+// Spread neighbouring tabs over the six existing theme colours, with gray last.
+pub(crate) const TAB_COLORS: [u8; 6] = [0, 2, 3, 4, 5, 1];
+
+fn new_tab_color(colors: &[u8], after: usize) -> u8 {
+    let start = TAB_COLORS.iter().position(|&c| c == colors[after]).unwrap_or(0);
+    (1..6).map(|d| TAB_COLORS[(start + d) % 6]).find(|&c| colors.get(after + 1) != Some(&c)).unwrap()
 }
 
 impl Session {
@@ -294,12 +314,19 @@ impl Session {
         t
     }
 
+    pub(crate) fn tab_color_list(&self, i: usize) -> Vec<u8> {
+        (0..self.tab_list(i).len()).map(|k| self.tab_colors[i].get(k).copied().filter(|&c| c < 6).unwrap_or(TAB_COLORS[k % 6])).collect()
+    }
+
     /// Ctrl+T: a copy of the current tab right after it, made current. Nothing to browse, it is the same folder.
     pub(crate) fn add_tab(&mut self, i: usize) {
         let mut t = self.tab_list(i);
+        let mut colors = self.tab_color_list(i);
         let k = self.tab[i].min(t.len() - 1) + 1;
         t.insert(k, self.paths[i].clone());
+        colors.insert(k, new_tab_color(&colors, k - 1));
         (self.tabs[i], self.tab[i]) = (t, k);
+        self.tab_colors[i] = colors;
     }
 
     /// Ctrl+K / the tab menu's Duplicate: a copy of tab k right after it, made current. The folder to browse to,
@@ -310,9 +337,12 @@ impl Session {
             return None;
         }
         let cur = if t.len() > 1 { self.tab[i] } else { 0 };
+        let mut colors = self.tab_color_list(i);
         let to = t[k].clone();
         t.insert(k + 1, to.clone());
+        colors.insert(k + 1, new_tab_color(&colors, k));
         (self.tabs[i], self.tab[i]) = (t, k + 1);
+        self.tab_colors[i] = colors;
         (k != cur).then_some(to)
     }
 
@@ -335,7 +365,9 @@ impl Session {
             return None;
         }
         let cur = self.tab[i];
+        let mut colors = self.tab_color_list(i);
         t.remove(k);
+        colors.remove(k);
         let (next, go) = match k.cmp(&cur) {
             std::cmp::Ordering::Less => (cur - 1, None),
             std::cmp::Ordering::Greater => (cur, None),
@@ -345,7 +377,30 @@ impl Session {
             }
         };
         (self.tabs[i], self.tab[i]) = if t.len() > 1 { (t, next) } else { (Vec::new(), 0) };
+        self.tab_colors[i] = colors;
         go
+    }
+
+    /// Move a tab into gap 0..=n without browsing. Its folder, colour and active status move together.
+    pub(crate) fn move_tab(&mut self, i: usize, from: usize, slot: usize) -> bool {
+        let mut tabs = self.tab_list(i);
+        if from >= tabs.len() || slot > tabs.len() || slot == from || slot == from + 1 {
+            return false;
+        }
+        let mut colors = self.tab_color_list(i);
+        let to = if slot > from { slot - 1 } else { slot };
+        let path = tabs.remove(from);
+        let color = colors.remove(from);
+        tabs.insert(to, path);
+        colors.insert(to, color);
+        let cur = self.tab[i];
+        self.tab[i] = if cur == from { to } else {
+            let after_removal = cur - usize::from(cur > from);
+            after_removal + usize::from(after_removal >= to)
+        };
+        self.tabs[i] = tabs;
+        self.tab_colors[i] = colors;
+        true
     }
 }
 

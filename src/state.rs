@@ -28,6 +28,7 @@ pub(crate) struct App {
     pub(crate) dpi: i32,
     pub(crate) panes: Vec<Option<Pane>>,
     pub(crate) drag: Option<Hit>,
+    pub(crate) tab_press: Option<TabPress>, // tab click / reorder drag; no session changes until release
     pub(crate) gap_hot: Option<Hit>, // splitter under the mouse, marked in the accent colour
     pub(crate) sizing: bool, // inside the window's own move/size loop
     pub(crate) was_max: bool, // maximized when last not minimized (saved as such while minimized)
@@ -110,6 +111,7 @@ thread_local! {
         dpi: 96,
         panes: (0..MAXP).map(|_| None).collect(),
         drag: None,
+        tab_press: None,
         gap_hot: None,
         sizing: false,
         was_max: false,

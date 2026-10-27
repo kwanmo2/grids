@@ -1752,6 +1752,44 @@ mod tests {
     }
 
     #[test]
+    fn tab_number_shortcuts() {
+        for digit in 0..=9 {
+            let key = VIRTUAL_KEY(VK_0.0 + digit);
+            for ctrl in [false, true] {
+                for shift in [false, true] {
+                    for alt in [false, true] {
+                        let expected = if alt && !ctrl && !shift && (1..=4).contains(&digit) { Some((digit - 1) as usize) } else { None };
+                        assert_eq!(tab_number_key(key, ctrl, shift, alt), expected);
+                    }
+                }
+            }
+        }
+        for key in [VK_NUMPAD1, VK_A, VK_F1] {
+            assert_eq!(tab_number_key(key, false, false, true), None);
+        }
+        let mut s = Session::default();
+        s.tabs[0] = ["a", "b", "c", "d"].map(String::from).to_vec();
+        s.paths[0] = "a".into();
+        s.paths[1] = "other pane".into();
+        for key in [VK_4, VK_2, VK_3, VK_1] {
+            let k = tab_number_key(key, false, false, true).unwrap();
+            s.paths[0] = s.pick_tab(0, k).unwrap();
+            assert_eq!(s.tab[0], k);
+            assert_eq!(s.paths[0], ["a", "b", "c", "d"][k]);
+            assert_eq!(s.paths[1], "other pane");
+            assert_eq!(s.active, 0);
+        }
+        s.move_tab(0, 3, 0);
+        let k = tab_number_key(VK_1, false, false, true).unwrap();
+        assert_eq!(s.pick_tab(0, k).as_deref(), Some("d")); // current order after dragging
+        let mut s = Session::default();
+        s.paths[0] = "only tab".into();
+        let before = s.clone();
+        assert_eq!(s.pick_tab(0, tab_number_key(VK_4, false, false, true).unwrap()), None);
+        assert_eq!(s, before); // a missing tab neither creates tabs nor changes panes
+    }
+
+    #[test]
     fn tabs_model() {
         let mut s = Session::default();
         s.paths[0] = r"C:\a".into();
@@ -1812,7 +1850,9 @@ mod tests {
         // one tab, a bad index, an older ini: no tabs
         assert!(Session::parse("p0=C:\\a\nb0=0|C:\\a\nb1=9|x|y\n").tabs[0].is_empty());
         assert_eq!(Session::parse("b1=9|x|y\n").tab[1], 1);
-        assert!(!Session::parse("side=300\n").tabs_on);
+        assert!(Session::default().tabs_on);
+        assert!(Session::parse("side=300\n").tabs_on);
+        assert!(!Session::parse("tabs=0\n").tabs_on); // an explicit preference is kept
         // tabs move with their pane
         let mut m = back.clone();
         m.swap_slots(2, 0);
@@ -1823,13 +1863,82 @@ mod tests {
     }
 
     #[test]
+    fn tabs_stay_with_each_pane_after_restart() {
+        let mut s = Session::default();
+        s.paths[0] = r"C:\work".into();
+        s.paths[1] = r"D:\photos".into();
+        s.add_tab(0);
+        s.paths[0] = r"C:\downloads".into();
+        s.add_tab(1);
+        s.paths[1] = r"D:\archive".into();
+        s.add_tab(1);
+        s.paths[1] = r"D:\backup".into();
+        let other = s.tab_list(1);
+        let to = s.pick_tab(0, 0).unwrap();
+        s.paths[0] = to;
+        assert_eq!(s.tab_list(1), other);
+        assert_eq!(s.tab[1], 2);
+        s.tabs_on = false; // hiding strips must not discard their folders
+        let restored = Session::parse(&s.to_ini());
+        assert!(!restored.tabs_on);
+        for i in 0..2 {
+            assert_eq!(restored.tab_list(i), s.tab_list(i));
+            assert_eq!(restored.tab[i], s.tab[i]);
+        }
+        let mut loaded = Session::default();
+        loaded.take_layout(&Session::parse(&s.snapshot()));
+        assert_eq!(loaded.tab_list(0), vec![r"C:\work", r"C:\downloads"]);
+        assert_eq!(loaded.tab_list(1), other);
+    }
+
+    #[test]
     fn tab_strip() {
         let strip = RECT { left: 2, top: 30, right: 402, bottom: 56 };
-        let (tabs, plus) = tab_rects(strip, 2, 96);
-        assert_eq!((tabs[0].left, tabs[0].right - tabs[0].left, tabs[1].right, plus.left, plus.right), (6, 170, 346, 346, 370));
-        let (tabs, plus) = tab_rects(strip, 10, 96); // squeezed evenly, '+' still inside
-        assert!(tabs.iter().all(|r| r.right - r.left == 36) && plus.right <= strip.right);
-        assert!(tab_close_rect(tabs[0], 96).is_none() && tab_close_rect(RECT { left: 0, top: 0, right: 64, bottom: 20 }, 96).is_some());
+        let geo = tab_rects(strip, 2, 0, 96);
+        assert_eq!((geo.tabs[0].left, geo.tabs[0].right - geo.tabs[0].left, geo.tabs[1].right, geo.plus.left, geo.plus.right), (6, 170, 346, 346, 370));
+        assert!(geo.more.is_none());
+        // Many tabs stay readable and keep the active tab in view, with both buttons inside the strip.
+        for cur in 0..10 {
+            let geo = tab_rects(strip, 10, cur, 96);
+            assert_eq!(geo.tabs.len(), 3);
+            assert!(geo.tabs.iter().all(|r| r.right - r.left >= 96));
+            assert!((geo.first..geo.first + geo.tabs.len()).contains(&cur));
+            assert!(geo.plus.right <= geo.more.unwrap().left && geo.more.unwrap().right <= strip.right);
+        }
+    }
+
+    #[test]
+    fn tab_strip_bounds_and_hits() {
+        for dpi in [96, 144, 192] {
+            for width in [0, 20, 80, 180, 400, 800] {
+                let strip = RECT { left: 2, top: 30, right: 2 + width * dpi / 96, bottom: 30 + 26 * dpi / 96 };
+                let mut pg = pane_geo(800, 500, dpi);
+                pg.tabs = strip;
+                for n in [0usize, 1, 2, 10, 100] {
+                    let cur = n.saturating_sub(1);
+                    let geo = tab_rects(strip, n, cur, dpi);
+                    for r in geo.tabs.iter().chain([&geo.plus]).chain(geo.more.iter()) {
+                        assert!(r.left >= strip.left && r.right >= r.left && r.right <= strip.right);
+                    }
+                    for (offset, r) in geo.tabs.iter().enumerate().filter(|(_, r)| r.right > r.left) {
+                        let k = geo.first + offset;
+                        assert_eq!(tab_hit(&pg, n, cur, r.left, r.top, dpi), Some(TabHit::Tab(k)));
+                        assert_eq!(tab_hit(&pg, n, cur, r.right - 1, r.top, dpi), Some(TabHit::Tab(k))); // no close hit area
+                        for active in [false, true] {
+                            let band = tab_band(*r, dpi, active);
+                            assert!(band.left >= r.left && band.right <= r.right && band.top == r.top && band.bottom <= r.bottom);
+                        }
+                    }
+                    if geo.plus.right > geo.plus.left {
+                        assert_eq!(tab_hit(&pg, n, cur, geo.plus.left, geo.plus.top, dpi), Some(TabHit::Plus));
+                    }
+                    if let Some(r) = geo.more.filter(|r| r.right > r.left) {
+                        assert_eq!(tab_hit(&pg, n, cur, r.left, r.top, dpi), Some(TabHit::More));
+                    }
+                    assert_eq!(tab_hit(&pg, n, cur, strip.right, strip.top, dpi), None);
+                }
+            }
+        }
     }
 
     #[test]

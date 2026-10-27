@@ -348,7 +348,16 @@ pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
         };
         match msg {
             WM_TIMER if wp.0 == TIMER_SETTLE => settle_cols(h),
-            WM_SIZE => layout_pane(h),
+            WM_TIMER if wp.0 == TIMER_TAB_DRAG => scroll_tab_drag(h),
+            WM_SIZE => {
+                cancel_tab_drag(h);
+                layout_pane(h);
+            }
+            WM_CANCELMODE | WM_CAPTURECHANGED | WM_DESTROY => cancel_tab_drag(h),
+            WM_LBUTTONUP if app(|a| a.tab_press.is_some_and(|p| p.hwnd == h)) => {
+                let (x, y) = xy(lp);
+                finish_tab_drag(h, x, y);
+            }
             WM_LBUTTONDBLCLK if pane_of(h).is_some_and(|i| on_strip(h, i, lp)) => {
                 // empty strip: a new tab; on a tab it is just a second click
                 let (x, y) = ((lp.0 & 0xffff) as i16 as i32, (lp.0 >> 16 & 0xffff) as i16 as i32);
@@ -356,8 +365,8 @@ pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     let mut rc = RECT::default();
                     _ = GetClientRect(h, &mut rc);
                     let dpi = app(|a| a.dpi);
-                    let n = app(|a| a.s.tab_list(i).len());
-                    if matches!(tab_hit(&pane_geo(rc.right, rc.bottom, dpi), n, x, y, dpi), Some(TabHit::Strip)) {
+                    let (n, cur) = app(|a| (a.s.tab_list(i).len(), a.s.tab[i]));
+                    if matches!(tab_hit(&pane_geo(rc.right, rc.bottom, dpi), n, cur, x, y, dpi), Some(TabHit::Strip)) {
                         new_tab(i);
                     } else {
                         tab_mouse(h, i, x, y, false);
@@ -396,6 +405,9 @@ pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             }
             WM_MOUSEMOVE => {
                 let (x, y) = ((lp.0 & 0xffff) as i16 as i32, (lp.0 >> 16 & 0xffff) as i16 as i32);
+                if move_tab_drag(h, x, y) {
+                    return LRESULT(0);
+                }
                 let k = pane_of(h).and_then(|i| crumb_at(h, i, x, y)).flatten().map(|(k, ..)| k);
                 crumb_hover(h, k);
             }
@@ -482,8 +494,8 @@ pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 _ = GetClientRect(h, &mut rc);
                 let dpi = app(|a| a.dpi);
                 let pg = pane_geo(rc.right, rc.bottom, dpi);
-                let tab = |i: usize| match tab_hit(&pg, app(|a| a.s.tab_list(i).len()), p.x, p.y, dpi) {
-                    Some(TabHit::Tab(k) | TabHit::Close(k)) => Some(k),
+                let tab = |i: usize| match tab_hit(&pg, app(|a| a.s.tab_list(i).len()), app(|a| a.s.tab[i]), p.x, p.y, dpi) {
+                    Some(TabHit::Tab(k)) => Some(k),
                     _ => None,
                 };
                 match pane_of(h).filter(|_| lp.0 != -1).map(|i| (i, tab(i))) {

@@ -189,22 +189,33 @@ pub(crate) fn tab_strip_h(dpi: i32) -> i32 {
     if TABS_ON.load(Ordering::Relaxed) { 26 * dpi / 96 } else { 0 }
 }
 
-// Tabs share the strip evenly up to a comfortable width, then a '+' after the last. (tabs, '+')
-pub(crate) fn tab_rects(strip: RECT, n: usize, dpi: i32) -> (Vec<RECT>, RECT) {
-    let s = |v: i32| v * dpi / 96;
-    let (pad, plus) = (s(4), s(24));
-    let room = (strip.right - strip.left - 2 * pad - plus).max(0);
-    let w = (room / n.max(1) as i32).min(s(170));
-    let tab = |k: i32| RECT { left: strip.left + pad + k * w, top: strip.top + s(3), right: strip.left + pad + (k + 1) * w, bottom: strip.bottom };
-    let tabs: Vec<RECT> = (0..n as i32).map(tab).collect();
-    let x = tabs.last().map_or(strip.left + pad, |r| r.right);
-    (tabs, RECT { left: x, top: strip.top + s(3), right: x + plus, bottom: strip.bottom })
+pub(crate) struct TabGeo {
+    pub(crate) first: usize, // index of the first visible tab
+    pub(crate) tabs: Vec<RECT>,
+    pub(crate) plus: RECT,
+    pub(crate) more: Option<RECT>, // all-tabs menu when some tabs do not fit
 }
 
-// The × on a tab, at its right end; only on tabs wide enough to keep some name.
-pub(crate) fn tab_close_rect(tab: RECT, dpi: i32) -> Option<RECT> {
+// Keep readable tabs around the active one, with '+' and an all-tabs menu when they do not fit.
+// The active tab stays visible after a switch or resize, without any saved scroll position.
+pub(crate) fn tab_rects(strip: RECT, n: usize, cur: usize, dpi: i32) -> TabGeo {
     let s = |v: i32| v * dpi / 96;
-    (tab.right - tab.left >= s(64)).then(|| RECT { left: tab.right - s(22), right: tab.right - s(4), ..tab })
+    let width = (strip.right - strip.left).max(0);
+    let pad = s(4).min(width / 2);
+    let end = strip.left + width - pad;
+    let button = s(24).min((width - 2 * pad).max(0));
+    let room = (width - 2 * pad - button).max(0);
+    let overflow = n > 1 && room / (n as i32) < s(96);
+    let more = if overflow { button.min(room) } else { 0 };
+    let room = room - more;
+    let count = if overflow { (room / s(96).max(1)).max(1) as usize } else { n }.min(n);
+    let w = (room / count.max(1) as i32).min(s(170));
+    let first = cur.min(n.saturating_sub(1)).saturating_sub(count / 2).min(n - count);
+    let tab = |k: i32| RECT { left: strip.left + pad + k * w, top: strip.top + s(3), right: strip.left + pad + (k + 1) * w, bottom: strip.bottom };
+    let tabs: Vec<RECT> = (0..count as i32).map(tab).collect();
+    let x = tabs.last().map_or(strip.left + pad, |r| r.right);
+    let plus = RECT { left: x, top: strip.top + s(3), right: (x + button).min(end), bottom: strip.bottom };
+    TabGeo { first, tabs, plus, more: overflow.then_some(RECT { left: plus.right, right: (plus.right + more).min(end), ..plus }) }
 }
 
 pub(crate) fn inside(r: RECT, x: i32, y: i32) -> bool {

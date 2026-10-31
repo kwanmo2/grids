@@ -1,8 +1,9 @@
 // Embeds app.manifest (common controls v6 + per-monitor DPI) and app.ico (made by icon.py).
-// Writes a binary .res by hand and lets windres only convert it to COFF, so no C preprocessor is needed.
+// Writes a binary .res by hand. MSVC links it directly; GNU uses windres to convert it to COFF.
 fn main() {
     println!("cargo:rerun-if-changed=app.manifest");
     println!("cargo:rerun-if-changed=app.ico");
+    println!("cargo:rerun-if-env-changed=WINDRES");
     let out = std::env::var("OUT_DIR").unwrap();
     let entry = |size: usize, typ: u16, id: u16, lang: u16| {
         let mut h = Vec::new();
@@ -37,6 +38,11 @@ fn main() {
     }
     add(14, 1, &group); // RT_GROUP_ICON
     std::fs::write(format!("{out}/app.res"), res).unwrap();
+
+    if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+        println!("cargo:rustc-link-arg-bins={out}/app.res");
+        return;
+    }
 
     let obj = format!("{out}/app.res.o");
     let windres = std::env::var("WINDRES").unwrap_or("windres".into());

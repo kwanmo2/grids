@@ -91,13 +91,26 @@ Address bar: click a folder in the path to go there; click a › to list the fol
 
 ## Build
 
-Needs the Rust GNU toolchain (`x86_64-pc-windows-gnu`) and MSYS2's MinGW tools (`windres`, `dlltool`, `as` in `C:\msys64\mingw64\bin`).
+On Windows x64, use either build environment:
+
+- **MSVC (recommended)**: the Rust MSVC toolchain (`x86_64-pc-windows-msvc`) and Visual Studio or Build Tools with **Desktop development with C++**, including the Windows SDK. MSYS2 is not required.
+- **GNU**: the Rust GNU toolchain (`x86_64-pc-windows-gnu`) and MSYS2's MinGW tools (`windres`, `dlltool`, `as` in `C:\msys64\mingw64\bin`). Set `WINDRES` to use a `windres.exe` in another location.
 
 ```
-build.cmd
+.\build.cmd
 ```
 
 This builds `target\release\grids.exe` and copies it to `grids.exe` in the project folder. `icon.py` redraws the app icon (`app.ico`).
+
+Run from PowerShell:
+
+```powershell
+.\grids.exe
+# Open specific folders in panes
+.\grids.exe C:\Windows C:\Users
+```
+
+Keep the executable in a writable folder: settings (`grids.ini`) and named sessions (`sessions\`) are saved alongside it. Enable pane tabs from **View > Tabs in panes**. Run the existing unit tests with `cargo test --locked`.
 
 ## Credits
 

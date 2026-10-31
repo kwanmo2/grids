@@ -91,13 +91,26 @@ Windows용 빠르고 가벼운 다중 패널 파일 관리자입니다. 한 창�
 
 ## 빌드
 
-Rust GNU 툴체인(`x86_64-pc-windows-gnu`)과 MSYS2의 MinGW 도구(`C:\msys64\mingw64\bin`의 `windres`, `dlltool`, `as`)가 필요합니다.
+Windows x64에서 다음 중 하나의 빌드 환경이 필요합니다.
+
+- **MSVC (권장)**: Rust MSVC 툴체인(`x86_64-pc-windows-msvc`)과 Visual Studio 또는 Build Tools의 **C++를 사용한 데스크톱 개발** 워크로드(Windows SDK 포함). MSYS2는 필요하지 않습니다.
+- **GNU**: Rust GNU 툴체인(`x86_64-pc-windows-gnu`)과 MSYS2의 MinGW 도구(`C:\msys64\mingw64\bin`의 `windres`, `dlltool`, `as`). 다른 위치의 `windres.exe`는 `WINDRES` 환경 변수로 지정할 수 있습니다.
 
 ```
-build.cmd
+.\build.cmd
 ```
 
 `target\release\grids.exe`를 빌드해 프로젝트 폴더에 `grids.exe`로 복사합니다. 앱 아이콘(`app.ico`)은 `icon.py`로 다시 그립니다.
+
+PowerShell에서 실행:
+
+```powershell
+.\grids.exe
+# 지정한 폴더를 패널로 열기
+.\grids.exe C:\Windows C:\Users
+```
+
+설정(`grids.ini`)과 이름 붙인 세션(`sessions\`)은 실행 파일 옆에 저장되므로 쓰기 가능한 폴더에 두세요. 패널 탭은 **보기 → 패널 탭**에서 켤 수 있습니다. 기존 단위 테스트는 `cargo test --locked`로 실행합니다.
 
 ## 감사
 
